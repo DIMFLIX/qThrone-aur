@@ -1,10 +1,14 @@
 name: AUR Packages Deployment
 
 on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'PKGBUILD.stable'
+      - '.github/workflows/aur.yml'
   schedule:
-    # Проверяет новые релизы у автора каждый час
     - cron: '0 * * * *'
-  workflow_dispatch: # Можно пнуть руками в любой момент
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,34 +24,22 @@ jobs:
       - name: Get upstream release version and SHA256
         id: get_version
         run: |
-          # Забираем JSON последнего релиза напрямую у автора
           DATA=$(curl -sL https://api.github.com/repos/ttrroyy/qThrone/releases/latest)
-          
-          # Парсим тег (например, из v1.3.6 получаем 1.3.6)
           TAG=$(echo "$DATA" | jq -r '.tag_name')
           VERSION="${TAG#v}"
-          
-          # Смотрим, какая версия сейчас записана в нашем PKGBUILD.stable
           CURRENT_VER=$(grep -Po '^pkgver=\K.*' PKGBUILD.stable)
-          
           echo "Upstream: $VERSION | Local: $CURRENT_VER"
-          
           if [ "$VERSION" != "$CURRENT_VER" ] && [ "$VERSION" != "null" ]; then
             echo "updated=true" >> $GITHUB_OUTPUT
             echo "version=$VERSION" >> $GITHUB_OUTPUT
-            
-            # Забираем готовый sha256 прямо из API GitHub (даже качать файл не нужно!)
             ASSET_NAME="qThrone-${VERSION}-arch-x86_64.pkg.tar.zst"
             DIGEST=$(echo "$DATA" | jq -r ".assets[] | select(.name == \"$ASSET_NAME\") | .digest // empty")
-            
             if [ -n "$DIGEST" ]; then
               HASH="${DIGEST#sha256:}"
             else
-              # На случай если GitHub не отдал digest, считаем по старинке через curl
               URL="https://github.com/ttrroyy/qThrone/releases/download/v${VERSION}/${ASSET_NAME}"
               HASH=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
             fi
-            
             echo "hash=$HASH" >> $GITHUB_OUTPUT
           else
             echo "updated=false" >> $GITHUB_OUTPUT
@@ -60,8 +52,6 @@ jobs:
             -e "s/^pkgver=.*/pkgver=${{ steps.get_version.outputs.version }}/" \
             -e "s/^sha256sums=.*/sha256sums=('${{ steps.get_version.outputs.hash }}')/" \
             PKGBUILD.stable
-            
-          # Сохраняем обновлённый PKGBUILD в твой форк, чтобы в следующий час он знал, что версия уже актуальна
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add PKGBUILD.stable
